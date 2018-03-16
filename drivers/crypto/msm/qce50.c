@@ -48,7 +48,7 @@
 #define MAX_SPS_DESC_FIFO_SIZE 0xfff0
 #define QCE_MAX_NUM_DSCR    0x200
 #define QCE_SECTOR_SIZE	    0x200
-#define CE_CLK_100MHZ	100000000
+#define CE_CLK_160MHZ	160000000
 #define CE_CLK_DIV	1000000
 
 #define CRYPTO_CORE_MAJOR_VER_NUM 0x05
@@ -5716,7 +5716,7 @@ static int __qce_get_device_tree_data(struct platform_device *pdev,
 				"qcom,ce-opp-freq",
 				&pce_dev->ce_opp_freq_hz)) {
 		pr_info("CE operating frequency is not defined, setting to default 100MHZ\n");
-		pce_dev->ce_opp_freq_hz = CE_CLK_100MHZ;
+		pce_dev->ce_opp_freq_hz = CE_CLK_160MHZ;
 	}
 
 	if (of_property_read_bool((&pdev->dev)->of_node, "qcom,smmu-s1-enable"))
