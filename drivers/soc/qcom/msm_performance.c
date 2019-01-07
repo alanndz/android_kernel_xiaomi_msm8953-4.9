@@ -26,7 +26,81 @@
 #include <linux/input.h>
 #include <linux/kthread.h>
 
-static int touchboost = 1;
+static unsigned int use_input_evts_with_hi_slvt_detect;
+static struct mutex managed_cpus_lock;
+static int touchboost = 0;
+
+/* Maximum number to clusters that this module will manage*/
+static unsigned int num_clusters;
+struct cluster {
+	cpumask_var_t cpus;
+	/* Number of CPUs to maintain online */
+	int max_cpu_request;
+	/* To track CPUs that the module decides to offline */
+	cpumask_var_t offlined_cpus;
+	/* stats for load detection */
+	/* IO */
+	u64 last_io_check_ts;
+	unsigned int iowait_enter_cycle_cnt;
+	unsigned int iowait_exit_cycle_cnt;
+	spinlock_t iowait_lock;
+	unsigned int cur_io_busy;
+	bool io_change;
+	/* CPU */
+	unsigned int mode;
+	bool mode_change;
+	u64 last_mode_check_ts;
+	unsigned int single_enter_cycle_cnt;
+	unsigned int single_exit_cycle_cnt;
+	unsigned int multi_enter_cycle_cnt;
+	unsigned int multi_exit_cycle_cnt;
+	spinlock_t mode_lock;
+	/* Perf Cluster Peak Loads */
+	unsigned int perf_cl_peak;
+	u64 last_perf_cl_check_ts;
+	bool perf_cl_detect_state_change;
+	unsigned int perf_cl_peak_enter_cycle_cnt;
+	unsigned int perf_cl_peak_exit_cycle_cnt;
+	spinlock_t perf_cl_peak_lock;
+	/* Tunables */
+	unsigned int single_enter_load;
+	unsigned int pcpu_multi_enter_load;
+	unsigned int perf_cl_peak_enter_load;
+	unsigned int single_exit_load;
+	unsigned int pcpu_multi_exit_load;
+	unsigned int perf_cl_peak_exit_load;
+	unsigned int single_enter_cycles;
+	unsigned int single_exit_cycles;
+	unsigned int multi_enter_cycles;
+	unsigned int multi_exit_cycles;
+	unsigned int perf_cl_peak_enter_cycles;
+	unsigned int perf_cl_peak_exit_cycles;
+	unsigned int current_freq;
+	spinlock_t timer_lock;
+	unsigned int timer_rate;
+	struct timer_list mode_exit_timer;
+	struct timer_list perf_cl_peak_mode_exit_timer;
+};
+
+struct input_events {
+	unsigned int evt_x_cnt;
+	unsigned int evt_y_cnt;
+	unsigned int evt_pres_cnt;
+	unsigned int evt_dist_cnt;
+};
+
+struct trig_thr {
+	unsigned int pwr_cl_trigger_threshold;
+	unsigned int perf_cl_trigger_threshold;
+	unsigned int ip_evt_threshold;
+};
+static struct cluster **managed_clusters;
+static bool clusters_inited;
+static bool input_events_handler_registered;
+static struct input_events *ip_evts;
+static struct trig_thr thr;
+/* Work to evaluate the onlining/offlining CPUs */
+struct delayed_work evaluate_hotplug_work;
 
 /* To handle cpufreq min/max request */
 struct cpu_status {
