@@ -889,12 +889,302 @@ static int add_opp(struct clk_osm *c, struct device **device_list, int count)
 		 * this information will be used by thermal mitigation and the
 		 * scheduler.
 		 */
-		if (rate == min_rate) {
-			for (i = 0; i < count; i++) {
-				pr_info("Set OPP pair (%lu Hz, %d uv) on %s\n",
-					rate, uv, dev_name(device_list[i]));
-			}
+		if (rate == min_rate)
+			pr_info("Set OPP pair (%lu Hz, %d uv) on %s\n",
+				rate, uv, dev_name(dev));
+
+		if (rate == max_rate && max_rate != min_rate) {
+			pr_info("Set OPP pair (%lu Hz, %d uv) on %s\n",
+				rate, uv, dev_name(dev));
+			break;
 		}
+
+		if (min_rate == max_rate)
+			break;
+	}
+
+	return 0;
+}
+
+static struct clk *logical_cpu_to_clk(int cpu)
+{
+	struct device_node *cpu_node;
+	const u32 *cell;
+	u64 hwid;
+	static struct clk *cpu_clk_map[NR_CPUS];
+
+	if (cpu_clk_map[cpu])
+		return cpu_clk_map[cpu];
+
+	cpu_node = of_get_cpu_node(cpu, NULL);
+	if (!cpu_node)
+		goto fail;
+
+	cell = of_get_property(cpu_node, "reg", NULL);
+	if (!cell) {
+		pr_err("%s: missing reg property\n", cpu_node->full_name);
+		goto fail;
+	}
+
+	hwid = of_read_number(cell, of_n_addr_cells(cpu_node));
+	if ((hwid | pwrcl_clk.cpu_reg_mask) == pwrcl_clk.cpu_reg_mask) {
+		cpu_clk_map[cpu] = pwrcl_clk.hw.clk;
+		return pwrcl_clk.hw.clk;
+	}
+	if ((hwid | perfcl_clk.cpu_reg_mask) == perfcl_clk.cpu_reg_mask) {
+		cpu_clk_map[cpu] = perfcl_clk.hw.clk;
+		return perfcl_clk.hw.clk;
+	}
+
+fail:
+	return NULL;
+}
+
+static u64 clk_osm_get_cpu_cycle_counter(int cpu)
+{
+	struct clk_osm *c;
+	u32 val;
+	unsigned long flags;
+
+	if (logical_cpu_to_clk(cpu) == pwrcl_clk.hw.clk)
+		c = &pwrcl_clk;
+	else if (logical_cpu_to_clk(cpu) == perfcl_clk.hw.clk)
+		c = &perfcl_clk;
+	else {
+		pr_err("no clock device for CPU=%d\n", cpu);
+		return 0;
+	}
+
+	spin_lock_irqsave(&c->lock, flags);
+	val = clk_osm_read_reg_no_log(c, OSM_CYCLE_COUNTER_STATUS_REG);
+
+	if (val < c->prev_cycle_counter) {
+		/* Handle counter overflow */
+		c->total_cycle_counter += UINT_MAX -
+			c->prev_cycle_counter + val;
+		c->prev_cycle_counter = val;
+	} else {
+		c->total_cycle_counter += val - c->prev_cycle_counter;
+		c->prev_cycle_counter = val;
+	}
+	spin_unlock_irqrestore(&c->lock, flags);
+
+	return c->total_cycle_counter;
+}
+
+static void populate_opp_table(struct platform_device *pdev)
+{
+	int cpu;
+	struct device *cpu_dev;
+
+	for_each_possible_cpu(cpu) {
+		if (logical_cpu_to_clk(cpu) == pwrcl_clk.hw.clk) {
+			cpu_dev = get_cpu_device(cpu);
+			if (cpu_dev)
+				WARN(add_opp(&pwrcl_clk, cpu_dev),
+			     "Failed to add OPP levels for power cluster\n");
+		}
+		if (logical_cpu_to_clk(cpu) == perfcl_clk.hw.clk) {
+			cpu_dev = get_cpu_device(cpu);
+			if (cpu_dev)
+				WARN(add_opp(&perfcl_clk, cpu_dev),
+			     "Failed to add OPP levels for perf cluster\n");
+		}
+	}
+}
+
+static int debugfs_get_trace_enable(void *data, u64 *val)
+{
+	struct clk_osm *c = data;
+
+	*val = c->trace_en;
+	return 0;
+}
+
+static int debugfs_set_trace_enable(void *data, u64 val)
+{
+	struct clk_osm *c = data;
+
+	clk_osm_masked_write_reg(c, val ? TRACE_CTRL_ENABLE :
+				 TRACE_CTRL_DISABLE,
+				 TRACE_CTRL, TRACE_CTRL_EN_MASK);
+	c->trace_en = val ? true : false;
+	return 0;
+}
+DEFINE_SIMPLE_ATTRIBUTE(debugfs_trace_enable_fops,
+			debugfs_get_trace_enable,
+			debugfs_set_trace_enable,
+			"%llu\n");
+
+static int debugfs_get_wdog_trace(void *data, u64 *val)
+{
+	struct clk_osm *c = data;
+
+	*val = c->wdog_trace_en;
+	return 0;
+}
+
+static int debugfs_set_wdog_trace(void *data, u64 val)
+{
+	struct clk_osm *c = data;
+	int regval;
+
+	regval = clk_osm_read_reg(c, TRACE_CTRL);
+	regval = val ? regval | TRACE_CTRL_ENABLE_WDOG_STATUS :
+			regval & ~TRACE_CTRL_ENABLE_WDOG_STATUS;
+	clk_osm_write_reg(c, regval, TRACE_CTRL);
+	c->wdog_trace_en = val ? true : false;
+
+	return 0;
+}
+DEFINE_SIMPLE_ATTRIBUTE(debugfs_trace_wdog_enable_fops,
+			debugfs_get_wdog_trace,
+			debugfs_set_wdog_trace,
+			"%llu\n");
+
+#define MAX_DEBUG_BUF_LEN 15
+
+static DEFINE_MUTEX(debug_buf_mutex);
+static char debug_buf[MAX_DEBUG_BUF_LEN];
+
+static ssize_t debugfs_trace_method_set(struct file *file,
+					const char __user *buf,
+					size_t count, loff_t *ppos)
+{
+	struct clk_osm *c;
+	u32 val;
+
+	if (IS_ERR(file) || file == NULL) {
+		pr_err("input error %ld\n", PTR_ERR(file));
+		return -EINVAL;
+	}
+
+	c = file->private_data;
+
+	if (!c) {
+		pr_err("invalid clk_osm handle\n");
+		return -EINVAL;
+	}
+
+	if (count < MAX_DEBUG_BUF_LEN) {
+		mutex_lock(&debug_buf_mutex);
+
+		if (copy_from_user(debug_buf, (void __user *) buf, count)) {
+			mutex_unlock(&debug_buf_mutex);
+			return -EFAULT;
+		}
+		debug_buf[count] = '\0';
+		mutex_unlock(&debug_buf_mutex);
+
+		/* check that user entered a supported packet type */
+		if (strcmp(debug_buf, "periodic\n") == 0) {
+			clk_osm_write_reg(c, clk_osm_count_ns(c,
+					      PERIODIC_TRACE_DEFAULT_NS),
+					  PERIODIC_TRACE_TIMER_CTRL);
+			clk_osm_masked_write_reg(c,
+				 TRACE_CTRL_PERIODIC_TRACE_ENABLE,
+				 TRACE_CTRL, TRACE_CTRL_PERIODIC_TRACE_EN_MASK);
+			c->trace_method = PERIODIC_PACKET;
+			c->trace_periodic_timer = PERIODIC_TRACE_DEFAULT_NS;
+			return count;
+		} else if (strcmp(debug_buf, "xor\n") == 0) {
+			val = clk_osm_read_reg(c, TRACE_CTRL);
+			val &= ~TRACE_CTRL_PERIODIC_TRACE_ENABLE;
+			clk_osm_write_reg(c, val, TRACE_CTRL);
+			c->trace_method = XOR_PACKET;
+			return count;
+		}
+	}
+
+	pr_err("error, supported trace mode types: 'periodic' or 'xor'\n");
+	return -EINVAL;
+}
+
+static ssize_t debugfs_trace_method_get(struct file *file, char __user *buf,
+					size_t count, loff_t *ppos)
+{
+	struct clk_osm *c;
+	int len = 0;
+
+	if (IS_ERR(file) || file == NULL) {
+		pr_err("input error %ld\n", PTR_ERR(file));
+		return -EINVAL;
+	}
+
+	c = file->private_data;
+
+	if (!c) {
+		pr_err("invalid clk_osm handle\n");
+		return -EINVAL;
+	}
+
+	mutex_lock(&debug_buf_mutex);
+
+	if (c->trace_method == PERIODIC_PACKET)
+		len = snprintf(debug_buf, sizeof(debug_buf), "periodic\n");
+	else if (c->trace_method == XOR_PACKET)
+		len = snprintf(debug_buf, sizeof(debug_buf), "xor\n");
+
+	simple_read_from_buffer((void __user *) buf, count, ppos,
+				     (void *) debug_buf, len);
+
+	mutex_unlock(&debug_buf_mutex);
+
+	return 0;
+}
+
+static int debugfs_trace_method_open(struct inode *inode, struct file *file)
+{
+	if (IS_ERR(file) || file == NULL) {
+		pr_err("input error %ld\n", PTR_ERR(file));
+		return -EINVAL;
+	}
+
+	file->private_data = inode->i_private;
+	return 0;
+}
+
+static const struct file_operations debugfs_trace_method_fops = {
+	.write	= debugfs_trace_method_set,
+	.open   = debugfs_trace_method_open,
+	.read	= debugfs_trace_method_get,
+};
+
+static int debugfs_get_trace_packet_id(void *data, u64 *val)
+{
+	struct clk_osm *c = data;
+
+	*val = c->trace_id;
+	return 0;
+}
+
+static int debugfs_set_trace_packet_id(void *data, u64 val)
+{
+	struct clk_osm *c = data;
+
+	if (val < TRACE_PACKET0 || val > TRACE_PACKET3) {
+		pr_err("supported trace IDs=%d-%d\n",
+		       TRACE_PACKET0, TRACE_PACKET3);
+		return 0;
+	}
+
+	clk_osm_masked_write_reg(c, val << TRACE_CTRL_PACKET_TYPE_SHIFT,
+				 TRACE_CTRL, TRACE_CTRL_PACKET_TYPE_MASK);
+	c->trace_id = val;
+	return 0;
+}
+DEFINE_SIMPLE_ATTRIBUTE(debugfs_trace_packet_id_fops,
+			debugfs_get_trace_packet_id,
+			debugfs_set_trace_packet_id,
+			"%llu\n");
+
+static int debugfs_get_trace_periodic_timer(void *data, u64 *val)
+{
+	struct clk_osm *c = data;
+
+	*val = c->trace_periodic_timer;
+	return 0;
+}
 
 		if (rate == max_rate && max_rate != min_rate) {
 			for (i = 0; i < count; i++) {
