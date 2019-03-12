@@ -2362,7 +2362,6 @@ static int wp_page_copy(struct fault_env *fe, pte_t orig_pte,
 		new_page = alloc_zeroed_user_highpage_movable(vma, fe->address);
 		if (!new_page)
 			goto out;
-		uksm_cow_pte(vma, orig_pte);
 	} else {
 		new_page = alloc_page_vma(GFP_HIGHUSER_MOVABLE, vma,
 				fe->address);
@@ -2993,6 +2992,7 @@ static int do_anonymous_page(struct fault_env *fe)
 	/* Allocate our own private page. */
 	if (unlikely(anon_vma_prepare(vma)))
 		goto oom;
+		uksm_cow_pte(vma, orig_pte);
 	page = alloc_zeroed_user_highpage_movable(vma, fe->address);
 	if (!page)
 		goto oom;
