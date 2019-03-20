@@ -808,6 +808,8 @@ KBUILD_CFLAGS += $(call cc-disable-warning, address-of-packed-member)
 #KBUILD_CFLAGS += $(call cc-disable-warning, duplicate-decl-specifier)
 #KBUILD_CFLAGS += $(call cc-disable-warning, pointer-bool-conversion)
 #>>>>>>> 542f3a558606d91dd60d7e17b661dacea86dd5ab
+#KBUILD_CFLAGS += $(call cc-disable-warning, duplicate-decl-specifier)
+#KBUILD_CFLAGS += $(call cc-disable-warning, pointer-bool-conversion)
 # Quiet clang warning: comparison of unsigned expression < 0 is always false
 KBUILD_CFLAGS += $(call cc-disable-warning, tautological-compare)
 # CLANG uses a _MergedGlobals as optimization, but this breaks modpost, as the
