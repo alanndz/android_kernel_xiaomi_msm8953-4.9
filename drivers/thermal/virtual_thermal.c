@@ -119,9 +119,10 @@ int virt_therm_probe(struct platform_device *pdev)
 			rc = -EINVAL;
 			continue;
 		}
-
+		
+		int lol = vsens->sensor_names;
 		rc = of_property_read_string_array(child, "thermal-sensors",
-						vsens->sensor_names, nelems);
+						lol, nelems);
 		if (rc != nelems) {
 			dev_err(&pdev->dev,
 				"Cannot read thermal-sensors for %s.\n",
