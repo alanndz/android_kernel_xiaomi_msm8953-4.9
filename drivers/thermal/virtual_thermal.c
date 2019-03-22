@@ -98,6 +98,8 @@ int virt_therm_probe(struct platform_device *pdev)
 		struct virtual_sensor_data *vsens =
 				&virtual_therm->sensors[cur_node];
 		const char *stringprop;
+		const char **lol;
+
 		int nelems;
 
 		rc = of_property_read_string(child, "virt-zone-name",
@@ -120,7 +122,7 @@ int virt_therm_probe(struct platform_device *pdev)
 			continue;
 		}
 		
-		int lol = vsens->sensor_names;
+		lol = vsens->sensor_names;
 		rc = of_property_read_string_array(child, "thermal-sensors",
 						lol, nelems);
 		if (rc != nelems) {
