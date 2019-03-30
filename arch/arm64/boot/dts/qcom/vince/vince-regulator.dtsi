@@ -14,14 +14,6 @@
 
 /* msm8953-regulator */
 &rpm_bus {
-	rpm-regulator-smpa1 {
-		pm8953_s1: regulator-s1 {
-			regulator-min-microvolt = <830000>;
-			regulator-max-microvolt = <1250000>;
-			qcom,init-voltage = <1100000>;
-		};
-	};
-
 	rpm-regulator-ldoa2 {
 		pm8953_l2: regulator-l2 {
 			regulator-min-microvolt = <1200000>;
