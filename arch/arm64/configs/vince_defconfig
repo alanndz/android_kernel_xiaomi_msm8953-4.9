@@ -1,4 +1,4 @@
-þ#
+#
 # Automatically generated file; DO NOT EDIT.
 # Linux/arm64 4.9.166 Kernel Configuration
 #
@@ -2369,7 +2369,6 @@ CONFIG_DEVFREQ_THERMAL=y
 #
 # CONFIG_QCOM_SPMI_TEMP_ALARM is not set
 CONFIG_THERMAL_QPNP=y
-# CONFIG_VIRTUAL_THERMAL is not set
 # CONFIG_GENERIC_ADC_THERMAL is not set
 CONFIG_THERMAL_QPNP_ADC_TM=y
 CONFIG_THERMAL_TSENS=y
