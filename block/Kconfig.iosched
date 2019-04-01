@@ -38,7 +38,7 @@ config IOSCHED_CFQ
 
 config IOSCHED_ANXIETY
 	tristate "Anxiety I/O scheduler"
-	default y
+	default n
 	---help---
 	  The Anxiety I/O scheduler prioritizes latency over everything
 		else. When a request comes in, it will use a lighweight
@@ -68,7 +68,7 @@ config IOSCHED_ZEN
 
 config IOSCHED_BFQ
 	tristate "BFQ I/O scheduler"
-	default n
+	default y
 	---help---
 	The BFQ I/O scheduler distributes bandwidth among all
 	processes according to their weights, regardless of the
@@ -119,6 +119,9 @@ choice
 
 	config DEFAULT_ANXIETY
 		bool "Anxiety" if IOSCHED_ANXIETY=y
+
+	config DEFAULT_MAPLE
+		bool "Maple" if IOSCHED_MAPLE=y
 endchoice
 
 config DEFAULT_IOSCHED
