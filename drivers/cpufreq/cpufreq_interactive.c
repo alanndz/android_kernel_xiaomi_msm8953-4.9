@@ -389,9 +389,8 @@ static unsigned int choose_freq(struct cpufreq_interactive_policyinfo *pcpu,
 		 * than or equal to the target load.
 		 */
 
-		index = cpufreq_frequency_table_target(&pcpu->p_nolim,
-						       loadadjfreq / tl,
-						       CPUFREQ_RELATION_L);
+		index = cpufreq_table_find_index_l(&pcpu->p_nolim,
+						       loadadjfreq / tl);
 		freq = pcpu->freq_table[index].frequency;
 
 		if (freq > prevfreq) {
@@ -403,9 +402,9 @@ static unsigned int choose_freq(struct cpufreq_interactive_policyinfo *pcpu,
 				 * Find the highest frequency that is less
 				 * than freqmax.
 				 */
-				index = cpufreq_frequency_table_target(
+				index = cpufreq_table_find_index_h(
 					    &pcpu->p_nolim,
-					    freqmax - 1, CPUFREQ_RELATION_H);
+					    freqmax - 1);
 				freq = pcpu->freq_table[index].frequency;
 
 				if (freq == freqmin) {
@@ -428,9 +427,9 @@ static unsigned int choose_freq(struct cpufreq_interactive_policyinfo *pcpu,
 				 * Find the lowest frequency that is higher
 				 * than freqmin.
 				 */
-				index = cpufreq_frequency_table_target(
+				index = cpufreq_table_find_index_l(
 					    &pcpu->p_nolim,
-					    freqmin + 1, CPUFREQ_RELATION_L);
+					    freqmin + 1);
 				freq = pcpu->freq_table[index].frequency;
 
 				/*
@@ -639,8 +638,7 @@ static void cpufreq_interactive_timer(int data)
 
 	ppol->hispeed_validate_time = now;
 
-	index = cpufreq_frequency_table_target(&ppol->p_nolim, new_freq,
-					   CPUFREQ_RELATION_L);
+	index = cpufreq_table_find_index_l(&ppol->p_nolim, new_freq);
 	new_freq = ppol->freq_table[index].frequency;
 
 	/*
@@ -762,7 +760,7 @@ static int cpufreq_interactive_speedchange_task(void *data)
 				__cpufreq_driver_target(ppol->policy,
 							ppol->target_freq,
 							CPUFREQ_RELATION_H);
-			trace_cpufreq_interactive_setspeed(cpu,
+			trace_cpufrq_interactive_setspeed(cpu,
 						     ppol->target_freq,
 						     ppol->policy->cur);
 			up_read(&ppol->enable_sem);
@@ -1282,9 +1280,7 @@ static ssize_t store_io_is_busy(struct cpufreq_interactive_tunables *tunables,
 }
 
 static int cpufreq_interactive_enable_sched_input(
-			struct cpufreq_interactive_tunables *tunables)
-{
-	int rc = 0, j;
+			struct cpufreq_interactive_tunables *tunnt rc = 0, j;
 	struct cpufreq_interactive_tunables *t;
 
 	mutex_lock(&sched_lock);
@@ -1725,7 +1721,7 @@ int cpufreq_interactive_init(struct cpufreq_policy *policy)
 	tunables = get_tunables(ppol);
 	if (!tunables) {
 		tunables = alloc_tunable(policy);
-		if (IS_ERR(tunables))
+		if (IS_ERRtunables))
 			return PTR_ERR(tunables);
 	}
 
