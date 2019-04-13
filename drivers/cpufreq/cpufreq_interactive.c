@@ -1722,7 +1722,7 @@ int cpufreq_interactive_init(struct cpufreq_policy *policy)
 	tunables = get_tunables(ppol);
 	if (!tunables) {
 		tunables = alloc_tunable(policy);
-		if (IS_ERRtunables))
+		if (IS_ERR(tunables))
 			return PTR_ERR(tunables);
 	}
 
