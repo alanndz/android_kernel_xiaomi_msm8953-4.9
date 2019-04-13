@@ -760,7 +760,7 @@ static int cpufreq_interactive_speedchange_task(void *data)
 				__cpufreq_driver_target(ppol->policy,
 							ppol->target_freq,
 							CPUFREQ_RELATION_H);
-			trace_cpufrq_interactive_setspeed(cpu,
+			trace_cpufreq_interactive_setspeed(cpu,
 						     ppol->target_freq,
 						     ppol->policy->cur);
 			up_read(&ppol->enable_sem);
@@ -1280,7 +1280,8 @@ static ssize_t store_io_is_busy(struct cpufreq_interactive_tunables *tunables,
 }
 
 static int cpufreq_interactive_enable_sched_input(
-			struct cpufreq_interactive_tunables *tunnt rc = 0, j;
+			struct cpufreq_interactive_tunables *tunables)
+	int rc = 0, j;
 	struct cpufreq_interactive_tunables *t;
 
 	mutex_lock(&sched_lock);
