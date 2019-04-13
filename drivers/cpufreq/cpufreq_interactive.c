@@ -372,7 +372,8 @@ u32 get_freq_max_load(int cpu, unsigned int freq)
 static unsigned int choose_freq(struct cpufreq_interactive_policyinfo *pcpu,
 		unsigned int loadadjfreq)
 {
-	unsigned int freq = pcpu->policy->cur;
+	# unsigned int freq = pcpu->policy->cur;
+	struct cpufreq_frequency_table *freq= pcpu->freq_table;
 	unsigned int prevfreq, freqmin, freqmax;
 	unsigned int tl;
 	int index;
@@ -389,10 +390,8 @@ static unsigned int choose_freq(struct cpufreq_interactive_policyinfo *pcpu,
 		 * than or equal to the target load.
 		 */
 
-		index = cpufreq_frequency_table_target(&pcpu->p_nolim,
-						       loadadjfreq / tl,
-						       CPUFREQ_RELATION_L);
-		freq = pcpu->freq_table[index].frequency;
+		index = cpufreq_table_find_index_l(&pcpuh->p_nolim, loadadjfreq / tl);
+		freq = freq_table[index].frequency;
 
 		if (freq > prevfreq) {
 			/* The previous frequency is too low. */
@@ -403,10 +402,9 @@ static unsigned int choose_freq(struct cpufreq_interactive_policyinfo *pcpu,
 				 * Find the highest frequency that is less
 				 * than freqmax.
 				 */
-				index = cpufreq_frequency_table_target(
-					    &pcpu->p_nolim,
-					    freqmax - 1, CPUFREQ_RELATION_H);
-				freq = pcpu->freq_table[index].frequency;
+				index = cpufreq_table_find_index_h(&pcpu->p_nolim,
+					    freqmax - 1);
+				freq = freq_table[index].frequency;
 
 				if (freq == freqmin) {
 					/*
@@ -428,11 +426,10 @@ static unsigned int choose_freq(struct cpufreq_interactive_policyinfo *pcpu,
 				 * Find the lowest frequency that is higher
 				 * than freqmin.
 				 */
-				index = cpufreq_frequency_table_target(
-					    &pcpu->p_nolim,
-					    freqmin + 1, CPUFREQ_RELATION_L);
-				freq = pcpu->freq_table[index].frequency;
-
+				index = cpufreq_table_find_index_l(&pcpu->p_nolim,
+					    freqmin + 1);
+				freq = freq_table[index].frequency;
+				
 				/*
 				 * If freqmax is the first frequency above
 				 * freqmin then we have already found that
@@ -639,9 +636,8 @@ static void cpufreq_interactive_timer(int data)
 
 	ppol->hispeed_validate_time = now;
 
-	index = cpufreq_frequency_table_target(&ppol->p_nolim, new_freq,
-					   CPUFREQ_RELATION_L);
-	new_freq = ppol->freq_table[index].frequency;
+	index = cpufreq_frequency_index_table_l(&ppol->p_nolim, new_freq);
+	new_freq = freq_table[index].frequency;
 
 	/*
 	 * Do not scale below floor_freq unless we have been at or above the
@@ -704,7 +700,7 @@ rearm:
 	/*
 	 * Send govinfo notification.
 	 * Govinfo notification could potentially wake up another thread
-	 * managed by its clients. Thread wakeups might trigger a load
+	 * managed by its clients. Thread wakeups might trger a load
 	 * change callback that executes this function again. Therefore
 	 * no spinlock could be held when sending the notification.
 	 */
@@ -1212,8 +1208,7 @@ static ssize_t store_boost(struct cpufreq_interactive_tunables *tunables,
 static ssize_t store_boostpulse(struct cpufreq_interactive_tunables *tunables,
 				const char *buf, size_t count)
 {
-	int ret;
-	unsigned long val;
+	int reted long val;
 
 	ret = kstrtoul(buf, 0, &val);
 	if (ret < 0)
@@ -1681,7 +1676,7 @@ static struct cpufreq_interactive_tunables *get_tunables(
 				struct cpufreq_interactive_policyinfo *ppol)
 {
 	if (have_governor_per_policy())
-		return ppol->cached_tunables;
+		return ched_tunables;
 	else
 		return cached_common_tunables;
 }
