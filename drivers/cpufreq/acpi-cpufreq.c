@@ -468,17 +468,20 @@ unsigned int acpi_cpufreq_fast_switch(struct cpufreq_policy *policy,
 	struct acpi_cpufreq_data *data = policy->driver_data;
 	struct acpi_processor_performance *perf;
 	struct cpufreq_frequency_table *entry;
-	unsigned int next_perf_state, next_freq, index;
+	unsigned int next_perf_state, next_freq, freq;
 
 	/*
 	 * Find the closest frequency above target_freq.
+	 *
+	 * The table is sorted in the reverse order with respect to the
+	 * frequency and all of the entries are valid (see the initialization).
 	 */
-	if (policy->cached_target_freq == target_freq)
-		index = policy->cached_resolved_idx;
-	else
-		index = cpufreq_table_find_index_dl(policy, target_freq);
-
-	entry = &policy->freq_table[index];
+	entry = policy->freq_table;
+	do {
+		entry++;
+		freq = entry->frequency;
+	} while (freq >= target_freq && freq != CPUFREQ_TABLE_END);
+	entry--;
 	next_freq = entry->frequency;
 	next_perf_state = entry->driver_data;
 

@@ -819,7 +819,8 @@ void powernv_cpufreq_work_fn(struct work_struct *work)
 		struct cpufreq_policy policy;
 
 		cpufreq_get_policy(&policy, cpu);
-		index = cpufreq_table_find_index_c(&policy, policy.cur);
+		index = cpufreq_frequency_table_target(&policy, policy.cur,
+					       CPUFREQ_RELATION_C);
 		powernv_cpufreq_target_index(&policy, index);
 		cpumask_andnot(&mask, &mask, policy.cpus);
 	}

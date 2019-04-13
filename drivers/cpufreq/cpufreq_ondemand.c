@@ -85,9 +85,11 @@ static unsigned int generic_powersave_bias_target(struct cpufreq_policy *policy,
 	freq_avg = freq_req - freq_reduc;
 
 	/* Find freq bounds for freq_avg in freq_table */
-	index = cpufreq_table_find_index_h(policy, freq_avg);
+	index = cpufreq_frequency_table_target(policy, freq_avg,
+					       CPUFREQ_RELATION_H);
 	freq_lo = freq_table[index].frequency;
-	index = cpufreq_table_find_index_l(policy, freq_avg);
+	index = cpufreq_frequency_table_target(policy, freq_avg,
+					       CPUFREQ_RELATION_L);
 	freq_hi = freq_table[index].frequency;
 
 	/* Find out how long we have to be in hi and lo freqs */
