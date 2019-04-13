@@ -1281,6 +1281,7 @@ static ssize_t store_io_is_busy(struct cpufreq_interactive_tunables *tunables,
 
 static int cpufreq_interactive_enable_sched_input(
 			struct cpufreq_interactive_tunables *tunables)
+{
 	int rc = 0, j;
 	struct cpufreq_interactive_tunables *t;
 
