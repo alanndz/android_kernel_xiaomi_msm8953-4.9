@@ -328,9 +328,10 @@ static unsigned int choose_freq(struct cpufreq_clarity_policyinfo *pcpu,
 		 * than or equal to the target load.
 		 */
 
-		if (cpufreq_frequency_table_target(
-			    &pcpu->p_nolim, pcpu->freq_table, loadadjfreq / tl,
-			    CPUFREQ_RELATION_L, &index))
+		index = cpufreq_table_find_index_l(&pcpu->p_nolim,
+			    loadadjfreq / tl);
+
+		if (index)
 			break;
 		freq = pcpu->freq_table[index].frequency;
 
@@ -343,10 +344,8 @@ static unsigned int choose_freq(struct cpufreq_clarity_policyinfo *pcpu,
 				 * Find the highest frequency that is less
 				 * than freqmax.
 				 */
-				if (cpufreq_frequency_table_target(
-					    &pcpu->p_nolim, pcpu->freq_table,
-					    freqmax - 1, CPUFREQ_RELATION_C,
-					    &index))
+				index = cpufreq_table_find_index_c(&pcpu->p_nolim, freqmax -1);
+				if (index)
 					break;
 				freq = pcpu->freq_table[index].frequency;
 
@@ -370,10 +369,9 @@ static unsigned int choose_freq(struct cpufreq_clarity_policyinfo *pcpu,
 				 * Find the lowest frequency that is higher
 				 * than freqmin.
 				 */
-				if (cpufreq_frequency_table_target(
-					    &pcpu->p_nolim, pcpu->freq_table,
-					    freqmin + 1, CPUFREQ_RELATION_L,
-					    &index))
+				index = cpufreq_table_find_index_l(&pcpu->p_nolim, 
+					    freqmin + 1);
+				if (index)
 					break;
 				freq = pcpu->freq_table[index].frequency;
 
@@ -600,9 +598,8 @@ static void cpufreq_clarity_timer(unsigned long data)
 
 	ppol->hispeed_validate_time = now;
 
-	if (cpufreq_frequency_table_target(&ppol->p_nolim, ppol->freq_table,
-					   new_freq, CPUFREQ_RELATION_L,
-					   &index)) {
+	index = cpufreq_table_find_index_l(&ppol->p_nolim, new_freq);
+	if (index) {
 		spin_unlock_irqrestore(&ppol->target_freq_lock, flags);
 		goto rearm;
 	}
