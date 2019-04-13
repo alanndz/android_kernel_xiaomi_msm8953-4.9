@@ -1650,15 +1650,13 @@ void cpufreq_clarity_exit(struct cpufreq_policy *policy)
 		       policy->related_cpus);
 	sched_update_freq_max_load(cpu_possible_mask);
 	if (!--tunables->usage_count) {
-		if (policy->governor->initialized == 1)
+		if (!--clarity_gov.usage_count)
 			cpufreq_unregister_notifier(&cpufreq_notifier_block,
 					CPUFREQ_TRANSITION_NOTIFIER);
 
 		sysfs_remove_group(get_governor_parent_kobj(policy),
 				get_sysfs_attr());
 
-		if (!have_governor_per_policy())
-			cpufreq_put_global_kobject();
 		common_tunables = NULL;
 	}
 
@@ -1783,7 +1781,7 @@ static struct clarity_governor clarity_gov = {
 	}
 };
 
-static int __init cpufreq_clarity_init(void)
+static int __init cpufreq_clarity_gov_init(void)
 {
 	struct sched_param param = { .sched_priority = MAX_RT_PRIO-1 };
 
@@ -1800,9 +1798,9 @@ static int __init cpufreq_clarity_init(void)
 	get_task_struct(speedchange_task);
 
 	/* NB: wake up so the thread does not look hung to the freezer */
-	wake_up_process_no_notif(speedchange_task);
+	wake_up_process(speedchange_task);
 
-	return cpufreq_register_governor(&cpufreq_gov_clarity);
+	return cpufreq_register_governor(CPU_FREQ_GOV_CLARITY);
 }
 
 #ifdef CONFIG_CPU_FREQ_DEFAULT_GOV_CLARITY
@@ -1811,16 +1809,16 @@ struct cpufreq_governor *cpufreq_default_governor(void)
 	return CPU_FREQ_GOV_CLARITY;
 }
 
-fs_initcall(cpufreq_clarity_init);
+fs_initcall(cpufreq_clarity_gov_init);
 #else
-module_init(cpufreq_clarity_init);
+module_init(cpufreq_clarity_gov_init);
 #endif
 
-static void __exit cpufreq_clarity_exit(void)
+static void __exit cpufreq_clarity_gov_exit(void)
 {
 	int cpu;
 
-	cpufreq_unregister_governor(&cpufreq_gov_clarity);
+	cpufreq_unregister_governor(CPU_FREQ_GOV_CLARITY);
 	kthread_stop(speedchange_task);
 	put_task_struct(speedchange_task);
 
@@ -1828,7 +1826,7 @@ static void __exit cpufreq_clarity_exit(void)
 		free_policyinfo(cpu);
 }
 
-module_exit(cpufreq_clarity_exit);
+module_exit(cpufreq_clarity_gov_exit);
 
 MODULE_AUTHOR("Mike Chan <mike@android.com>");
 MODULE_AUTHOR("Ryan Andri <ryanandri@linuxmail.org>");
