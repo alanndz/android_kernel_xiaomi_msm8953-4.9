@@ -14,6 +14,7 @@
  *
  * Author: Mike Chan (mike@android.com)
  * 	   Ryan Andri (ryanandri@linuxmail.org)
+ *	   alanndz (alanmahmud0@gmail.com)
  *
  */
 
@@ -654,7 +655,7 @@ static void cpufreq_clarity_timer(unsigned long data)
 	spin_lock_irqsave(&speedchange_cpumask_lock, flags);
 	cpumask_set_cpu(max_cpu, &speedchange_cpumask);
 	spin_unlock_irqrestore(&speedchange_cpumask_lock, flags);
-	wake_up_process_no_notif(speedchange_task);
+	wake_up_process(speedchange_task);
 
 rearm:
 	if (!timer_pending(&ppol->policy_timer))
@@ -757,8 +758,8 @@ static int load_change_callback(struct notifier_block *nb, unsigned long val,
 	spin_unlock_irqrestore(&ppol->target_freq_lock, flags);
 
 	if (!hrtimer_is_queued(&ppol->notif_timer))
-		__hrtimer_start_range_ns(&ppol->notif_timer, ms_to_ktime(1),
-					0, HRTIMER_MODE_REL, 0);
+		hrtimer_start(&ppol->notif_timer, ms_to_ktime(1),
+					HRTIMER_MODE_REL);
 exit:
 	up_read(&ppol->enable_sem);
 	return 0;
@@ -1567,10 +1568,8 @@ static int cpufreq_governor_clarity(struct cpufreq_policy *policy,
 	else
 		tunables = common_tunables;
 
-	BUG_ON(!tunables && (event != CPUFREQ_GOV_POLICY_INIT));
+		BUG_ON(!tunables);
 
-	switch (event) {
-	case CPUFREQ_GOV_POLICY_INIT:
 		ppol = get_policyinfo(policy);
 		if (IS_ERR(ppol))
 			return PTR_ERR(ppol);
@@ -1597,7 +1596,6 @@ static int cpufreq_governor_clarity(struct cpufreq_policy *policy,
 		policy->governor_data = tunables;
 		if (!have_governor_per_policy()) {
 			common_tunables = tunables;
-			WARN_ON(cpufreq_get_global_kobject());
 		}
 
 		rc = sysfs_create_group(get_governor_parent_kobj(policy),
@@ -1607,12 +1605,11 @@ static int cpufreq_governor_clarity(struct cpufreq_policy *policy,
 			policy->governor_data = NULL;
 			if (!have_governor_per_policy()) {
 				common_tunables = NULL;
-				cpufreq_put_global_kobject();
 			}
 			return rc;
 		}
 
-		if (!policy->governor->initialized)
+		if (!clarity_gov.usage_count++)
 			cpufreq_register_notifier(&cpufreq_notifier_block,
 					CPUFREQ_TRANSITION_NOTIFIER);
 
@@ -1630,7 +1627,8 @@ static int cpufreq_governor_clarity(struct cpufreq_policy *policy,
 
 		break;
 
-	case CPUFREQ_GOV_POLICY_EXIT:
+		BUG_ON(!tunables);
+
 		cpumask_andnot(&controlled_cpus, &controlled_cpus,
 			       policy->related_cpus);
 		sched_update_freq_max_load(cpu_possible_mask);
@@ -1654,10 +1652,11 @@ static int cpufreq_governor_clarity(struct cpufreq_policy *policy,
 
 		break;
 
-	case CPUFREQ_GOV_START:
+		BUG_ON(!tunables);
+
 		mutex_lock(&gov_lock);
 
-		freq_table = cpufreq_frequency_get_table(policy->cpu);
+		freq_table = policy->freq_table;
 		if (!tunables->hispeed_freq)
 			tunables->hispeed_freq = policy->min;
 
@@ -1687,7 +1686,7 @@ static int cpufreq_governor_clarity(struct cpufreq_policy *policy,
 		mutex_unlock(&gov_lock);
 		break;
 
-	case CPUFREQ_GOV_STOP:
+		BUG_ON(!tunables);
 		mutex_lock(&gov_lock);
 
 		ppol = per_cpu(polinfo, policy->cpu);
@@ -1703,7 +1702,7 @@ static int cpufreq_governor_clarity(struct cpufreq_policy *policy,
 		mutex_unlock(&gov_lock);
 		break;
 
-	case CPUFREQ_GOV_LIMITS:
+		BUG_ON(!tunables);
 		ppol = per_cpu(polinfo, policy->cpu);
 
 		__cpufreq_driver_target(policy,
@@ -1777,6 +1776,7 @@ module_exit(cpufreq_clarity_exit);
 
 MODULE_AUTHOR("Mike Chan <mike@android.com>");
 MODULE_AUTHOR("Ryan Andri <ryanandri@linuxmail.org>");
+MODULE_AUTHOR("alanndz <alanmahmud0@gmail.com>");
 MODULE_DESCRIPTION("'cpufreq_clarity' - A cpufreq governor for "
 	"Latency sensitive workloads");
 MODULE_LICENSE("GPL");
