@@ -313,7 +313,7 @@ static unsigned int choose_freq(struct cpufreq_clarity_policyinfo *pcpu,
 		unsigned int loadadjfreq)
 {
 	unsigned int freq = pcpu->policy->cur;
-	unsigned int prevfreq, freqmin, freqmax;
+		unsigned int prevfreq, freqmin, freqmax;
 	unsigned int tl;
 	int index;
 
@@ -1555,8 +1555,17 @@ static struct cpufreq_clarity_tunables *get_tunables(
 		return cached_common_tunables;
 }
 
-static int cpufreq_governor_clarity(struct cpufreq_policy *policy,
-		unsigned int event)
+/* Clarity Governor callbacks */
+struct clarity_governor {
+	struct cpufreq_governor gov;
+	unsigned int usage_count;
+};
+
+static struct clarity_governor clarity_gov;
+
+#define CPU_FREQ_GOV_CLARITY	(&clarity_gov.gov)
+
+int cpufreq_clarity_init(struct cpufreq_policy *policy)
 {
 	int rc;
 	struct cpufreq_clarity_policyinfo *ppol;
@@ -1568,168 +1577,210 @@ static int cpufreq_governor_clarity(struct cpufreq_policy *policy,
 	else
 		tunables = common_tunables;
 
-		BUG_ON(!tunables);
+	ppol = get_policyinfo(policy);
+	if (IS_ERR(ppol))
+		return PTR_ERR(ppol);
 
-		ppol = get_policyinfo(policy);
-		if (IS_ERR(ppol))
-			return PTR_ERR(ppol);
-
-		if (have_governor_per_policy()) {
-			WARN_ON(tunables);
-		} else if (tunables) {
-			tunables->usage_count++;
-			cpumask_or(&controlled_cpus, &controlled_cpus,
-				   policy->related_cpus);
-			sched_update_freq_max_load(policy->related_cpus);
-			policy->governor_data = tunables;
-			return 0;
-		}
-
-		tunables = get_tunables(ppol);
-		if (!tunables) {
-			tunables = alloc_tunable(policy);
-			if (IS_ERR(tunables))
-				return PTR_ERR(tunables);
-		}
-
-		tunables->usage_count = 1;
-		policy->governor_data = tunables;
-		if (!have_governor_per_policy()) {
-			common_tunables = tunables;
-		}
-
-		rc = sysfs_create_group(get_governor_parent_kobj(policy),
-				get_sysfs_attr());
-		if (rc) {
-			kfree(tunables);
-			policy->governor_data = NULL;
-			if (!have_governor_per_policy()) {
-				common_tunables = NULL;
-			}
-			return rc;
-		}
-
-		if (!clarity_gov.usage_count++)
-			cpufreq_register_notifier(&cpufreq_notifier_block,
-					CPUFREQ_TRANSITION_NOTIFIER);
-
-		if (tunables->use_sched_load)
-			cpufreq_clarity_enable_sched_input(tunables);
-
+	if (have_governor_per_policy()) {
+		WARN_ON(tunables);
+	} else if (tunables) {
+		tunables->usage_count++;
 		cpumask_or(&controlled_cpus, &controlled_cpus,
 			   policy->related_cpus);
 		sched_update_freq_max_load(policy->related_cpus);
-
-		if (have_governor_per_policy())
-			ppol->cached_tunables = tunables;
-		else
-			cached_common_tunables = tunables;
-
-		break;
-
-		BUG_ON(!tunables);
-
-		cpumask_andnot(&controlled_cpus, &controlled_cpus,
-			       policy->related_cpus);
-		sched_update_freq_max_load(cpu_possible_mask);
-		if (!--tunables->usage_count) {
-			if (policy->governor->initialized == 1)
-				cpufreq_unregister_notifier(&cpufreq_notifier_block,
-						CPUFREQ_TRANSITION_NOTIFIER);
-
-			sysfs_remove_group(get_governor_parent_kobj(policy),
-					get_sysfs_attr());
-
-			if (!have_governor_per_policy())
-				cpufreq_put_global_kobject();
-			common_tunables = NULL;
-		}
-
-		policy->governor_data = NULL;
-
-		if (tunables->use_sched_load)
-			cpufreq_clarity_disable_sched_input(tunables);
-
-		break;
-
-		BUG_ON(!tunables);
-
-		mutex_lock(&gov_lock);
-
-		freq_table = policy->freq_table;
-		if (!tunables->hispeed_freq)
-			tunables->hispeed_freq = policy->min;
-
-		ppol = per_cpu(polinfo, policy->cpu);
-		ppol->policy = policy;
-		ppol->target_freq = policy->cur;
-		ppol->freq_table = freq_table;
-		ppol->p_nolim = *policy;
-		ppol->p_nolim.min = policy->cpuinfo.min_freq;
-		ppol->p_nolim.max = policy->cpuinfo.max_freq;
-		ppol->floor_freq = ppol->target_freq;
-		ppol->floor_validate_time = ktime_to_us(ktime_get());
-		ppol->hispeed_validate_time = ppol->floor_validate_time;
-		ppol->min_freq = policy->min;
-		ppol->reject_notification = true;
-		ppol->notif_pending = false;
-		down_write(&ppol->enable_sem);
-		del_timer_sync(&ppol->policy_timer);
-		del_timer_sync(&ppol->policy_slack_timer);
-		ppol->policy_timer.data = policy->cpu;
-		ppol->last_evaluated_jiffy = get_jiffies_64();
-		cpufreq_clarity_timer_start(tunables, policy->cpu);
-		ppol->governor_enabled = 1;
-		up_write(&ppol->enable_sem);
-		ppol->reject_notification = false;
-
-		mutex_unlock(&gov_lock);
-		break;
-
-		BUG_ON(!tunables);
-		mutex_lock(&gov_lock);
-
-		ppol = per_cpu(polinfo, policy->cpu);
-		ppol->reject_notification = true;
-		down_write(&ppol->enable_sem);
-		ppol->governor_enabled = 0;
-		ppol->target_freq = 0;
-		del_timer_sync(&ppol->policy_timer);
-		del_timer_sync(&ppol->policy_slack_timer);
-		up_write(&ppol->enable_sem);
-		ppol->reject_notification = false;
-
-		mutex_unlock(&gov_lock);
-		break;
-
-		BUG_ON(!tunables);
-		ppol = per_cpu(polinfo, policy->cpu);
-
-		__cpufreq_driver_target(policy,
-				ppol->target_freq, CPUFREQ_RELATION_L);
-
-		down_read(&ppol->enable_sem);
-		if (ppol->governor_enabled) {
-			if (policy->min < ppol->min_freq)
-				cpufreq_clarity_timer_resched(policy->cpu,
-								  true);
-			ppol->min_freq = policy->min;
-		}
-		up_read(&ppol->enable_sem);
-
-		break;
+		policy->governor_data = tunables;
+		return 0;
 	}
+
+	tunables = get_tunables(ppol);
+	if (!tunables) {
+		tunables = alloc_tunable(policy);
+		if (IS_ERR(tunables))
+			return PTR_ERR(tunables);
+	}
+
+	tunables->usage_count = 1;
+	policy->governor_data = tunables;
+	if (!have_governor_per_policy()) {
+		common_tunables = tunables;
+	}
+
+	rc = sysfs_create_group(get_governor_parent_kobj(policy),
+			get_sysfs_attr());
+	if (rc) {
+		kfree(tunables);
+		policy->governor_data = NULL;
+		if (!have_governor_per_policy()) {
+			common_tunables = NULL;
+	}
+		return rc;
+	}
+	if (!clarity_gov.usage_count++)
+		cpufreq_register_notifier(&cpufreq_notifier_block,
+				CPUFREQ_TRANSITION_NOTIFIER);
+
+	if (tunables->use_sched_load)
+
+		cpufreq_clarity_enable_sched_input(tunables);
+
+	cpumask_or(&controlled_cpus, &controlled_cpus,
+		   policy->related_cpus);
+	sched_update_freq_max_load(policy->related_cpus);
+
+	if (have_governor_per_policy())
+		ppol->cached_tunables = tunables;
+	else
+		cached_common_tunables = tunables;
+
 	return 0;
 }
 
-#ifndef CONFIG_CPU_FREQ_DEFAULT_GOV_CLARITY
-static
-#endif
-struct cpufreq_governor cpufreq_gov_clarity = {
-	.name = "clarity",
-	.governor = cpufreq_governor_clarity,
-	.max_transition_latency = 10000000,
-	.owner = THIS_MODULE,
+void cpufreq_clarity_exit(struct cpufreq_policy *policy)
+{
+	struct cpufreq_clarity_tunables *tunables;
+
+	if (have_governor_per_policy())
+		tunables = policy->governor_data;
+	else
+		tunables = common_tunables;
+
+	BUG_ON(!tunables);
+
+	cpumask_andnot(&controlled_cpus, &controlled_cpus,
+		       policy->related_cpus);
+	sched_update_freq_max_load(cpu_possible_mask);
+	if (!--tunables->usage_count) {
+		if (policy->governor->initialized == 1)
+			cpufreq_unregister_notifier(&cpufreq_notifier_block,
+					CPUFREQ_TRANSITION_NOTIFIER);
+
+		sysfs_remove_group(get_governor_parent_kobj(policy),
+				get_sysfs_attr());
+
+		if (!have_governor_per_policy())
+			cpufreq_put_global_kobject();
+		common_tunables = NULL;
+	}
+
+	policy->governor_data = NULL;
+
+	if (tunables->use_sched_load)
+		cpufreq_clarity_disable_sched_input(tunables);
+
+	return 0;
+}
+
+int cpufreq_clarity_start(struct cpufreq_policy *policy)
+{
+	struct cpufreq_clarity_policyinfo *ppol;
+	struct cpufreq_frequency_table *freq_table;
+	struct cpufreq_clarity_tunables *tunables;
+
+	if (have_governor_per_policy())
+		tunables = policy->governor_data;
+	else
+		tunables = common_tunables;
+
+	BUG_ON(!tunables);
+
+	mutex_lock(&gov_lock);
+
+	freq_table = policy->freq_table;
+	if (!tunables->hispeed_freq)
+		tunables->hispeed_freq = policy->min;
+
+	ppol = per_cpu(polinfo, policy->cpu);
+	ppol->policy = policy;
+	ppol->target_freq = policy->cur;
+	ppol->freq_table = freq_table;
+	ppol->p_nolim = *policy;
+	ppol->p_nolim.min = policy->cpuinfo.min_freq;
+	ppol->p_nolim.max = policy->cpuinfo.max_freq;
+	ppol->floor_freq = ppol->target_freq;
+	ppol->floor_validate_time = ktime_to_us(ktime_get());
+	ppol->hispeed_validate_time = ppol->floor_validate_time;
+	ppol->min_freq = policy->min;
+	ppol->reject_notification = true;
+	ppol->notif_pending = false;
+	down_write(&ppol->enable_sem);
+	del_timer_sync(&ppol->policy_timer);
+	del_timer_sync(&ppol->policy_slack_timer);
+	ppol->policy_timer.data = policy->cpu;
+	ppol->last_evaluated_jiffy = get_jiffies_64();
+	cpufreq_clarity_timer_start(tunables, policy->cpu);
+	ppol->governor_enabled = 1;
+	up_write(&ppol->enable_sem);
+	ppol->reject_notification = false;
+
+	mutex_unlock(&gov_lock);
+
+	return 0;
+}
+
+void cpufreq_clarity_stop(struct cpufreq_policy *policy)
+{
+	struct cpufreq_clarity_policyinfo *ppol;
+	struct cpufreq_clarity_tunables *tunables;
+
+	if (have_governor_per_policy())
+		tunables = policy->governor_data;
+	else
+		tunables = common_tunables;
+
+	BUG_ON(!tunables);
+	mutex_lock(&gov_lock);
+
+	ppol = per_cpu(polinfo, policy->cpu);
+	ppol->reject_notification = true;
+	down_write(&ppol->enable_sem);
+	ppol->governor_enabled = 0;
+	ppol->target_freq = 0;
+	del_timer_sync(&ppol->policy_timer);
+	del_timer_sync(&ppol->policy_slack_timer);
+	up_write(&ppol->enable_sem);
+	ppol->reject_notification = false;
+
+	mutex_unlock(&gov_lock);
+	return 0;
+}
+
+void cpufreq_clarity_limits(struct cpufreq_policy *policy)
+{
+	struct cpufreq_clarity_policyinfo *ppol;
+	struct cpufreq_clarity_tunables *tunables;
+
+	if (have_governor_per_policy())
+		tunables = policy->governor_data;
+	else
+		tunables = common_tunables;
+
+	BUG_ON(!tunables);
+	ppol = per_cpu(polinfo, policy->cpu);
+
+	__cpufreq_driver_target(policy,
+			ppol->target_freq, CPUFREQ_RELATION_L);
+
+	down_read(&ppol->enable_sem);
+	if (ppol->governor_enabled) {
+		if (policy->min < ppol->min_freq)
+			cpufreq_clarity_timer_resched(policy->cpu,
+								  true);
+		ppol->min_freq = policy->min;
+	}
+	up_read(&ppol->enable_sem);
+}
+
+static struct clarity_governor clarity_gov = {
+	.gov = {
+		.name			= "clarity",
+		.max_transition_latency	= 10000000,
+		.owner			= THIS_MODULE,
+		.init			= cpufreq_clarity_init,
+		.exit			= cpufreq_clarity_exit,
+		.start			= cpufreq_clarity_start,
+		.stop			= cpufreq_clarity_stop,
+		.limits			= cpufreq_clarity_limits,
+	}
 };
 
 static int __init cpufreq_clarity_init(void)
@@ -1755,6 +1806,11 @@ static int __init cpufreq_clarity_init(void)
 }
 
 #ifdef CONFIG_CPU_FREQ_DEFAULT_GOV_CLARITY
+struct cpufreq_governor *cpufreq_default_governor(void)
+{
+	return CPU_FREQ_GOV_CLARITY;
+}
+
 fs_initcall(cpufreq_clarity_init);
 #else
 module_init(cpufreq_clarity_init);
