@@ -331,8 +331,6 @@ static unsigned int choose_freq(struct cpufreq_clarity_policyinfo *pcpu,
 		index = cpufreq_table_find_index_l(&pcpu->p_nolim,
 			    loadadjfreq / tl);
 
-		if (index)
-			break;
 		freq = pcpu->freq_table[index].frequency;
 
 		if (freq > prevfreq) {
@@ -345,8 +343,6 @@ static unsigned int choose_freq(struct cpufreq_clarity_policyinfo *pcpu,
 				 * than freqmax.
 				 */
 				index = cpufreq_table_find_index_c(&pcpu->p_nolim, freqmax -1);
-				if (index)
-					break;
 				freq = pcpu->freq_table[index].frequency;
 
 				if (freq == freqmin) {
@@ -371,8 +367,6 @@ static unsigned int choose_freq(struct cpufreq_clarity_policyinfo *pcpu,
 				 */
 				index = cpufreq_table_find_index_l(&pcpu->p_nolim, 
 					    freqmin + 1);
-				if (index)
-					break;
 				freq = pcpu->freq_table[index].frequency;
 
 				/*
