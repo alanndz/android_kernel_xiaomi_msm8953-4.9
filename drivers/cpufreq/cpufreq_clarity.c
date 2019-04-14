@@ -33,7 +33,6 @@
 #include <linux/workqueue.h>
 #include <linux/kthread.h>
 #include <linux/slab.h>
-#include <linux/display_state.h>
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/cpufreq_clarity.h>
@@ -460,18 +459,11 @@ static void cpufreq_clarity_timer(unsigned long data)
 	bool skip_hispeed_logic, skip_min_sample_time;
 	bool jump_to_max_no_ts = false;
 	bool jump_to_max = false;
-	bool display_on = is_display_on();
 
 	if (!down_read_trylock(&ppol->enable_sem))
 		return;
 	if (!ppol->governor_enabled)
 		goto exit;
-
-	suspend_freq = tunables->suspend_max_freq;
-	if (suspend_freq < ppol->policy->min)
-		suspend_freq = ppol->policy->min;
-	if (suspend_freq > ppol->policy->max)
-		suspend_freq = ppol->policy->max;
 
 	now = ktime_to_us(ktime_get());
 
@@ -575,15 +567,12 @@ static void cpufreq_clarity_timer(unsigned long data)
 					       tunables->hispeed_freq);
 		} else if (pol_load < tunables->go_lowspeed_load)
 				new_freq = ppol->policy->min;
-			
+
 	}
 
 	if (now - ppol->max_freq_hyst_start_time <
 	    tunables->max_freq_hysteresis)
 		new_freq = max(tunables->hispeed_freq, new_freq);
-
-	if (!display_on)
-		new_freq = min(new_freq, suspend_freq);
 
 	if (!skip_hispeed_logic &&
 	    ppol->target_freq >= tunables->hispeed_freq &&
