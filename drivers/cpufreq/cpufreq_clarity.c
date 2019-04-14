@@ -1665,7 +1665,6 @@ void cpufreq_clarity_exit(struct cpufreq_policy *policy)
 	if (tunables->use_sched_load)
 		cpufreq_clarity_disable_sched_input(tunables);
 
-	return 0;
 }
 
 int cpufreq_clarity_start(struct cpufreq_policy *policy)
@@ -1739,7 +1738,6 @@ void cpufreq_clarity_stop(struct cpufreq_policy *policy)
 	ppol->reject_notification = false;
 
 	mutex_unlock(&gov_lock);
-	return 0;
 }
 
 void cpufreq_clarity_limits(struct cpufreq_policy *policy)
