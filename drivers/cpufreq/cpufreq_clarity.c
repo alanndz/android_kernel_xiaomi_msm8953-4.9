@@ -628,12 +628,7 @@ static void cpufreq_clarity_timer(unsigned long data)
 
 	ppol->hispeed_validate_time = now;
 
-	index = cpufreq_frequency_index_table_l(&ppol->p_nolim, new_freq);
-	if (index) {
-		spin_unlock_irqrestore(&ppol->target_freq_lock, flags);
-		goto rearm;
-	}
-
+	index = cpufreq_table_find_index_l(&ppol->p_nolim, new_freq);
 	new_freq = freq_table[index].frequency;
 
 	/*
