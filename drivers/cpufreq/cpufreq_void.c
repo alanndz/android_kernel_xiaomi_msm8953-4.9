@@ -13,7 +13,7 @@
  * GNU General Public License for more details.
  *
  * Author: Mike Chan (mike@android.com)
- *               alanndz (alanmahmud0@gmail.com)
+ *			   alanndz (alanmahmud0@gmail.com)
  *
  */
 
@@ -102,14 +102,9 @@ struct cpufreq_void_tunables {
 	/* Hi speed to bump to from lo speed when load burst (default max) */
 	unsigned int hispeed_freq;
 	/* Go to hi speed when CPU load at or above this value. */
-#define DEFAULT_GO_HISPEED_LOAD 93
+#define DEFAULT_GO_HISPEED_LOAD 99
 	unsigned long go_hispeed_load;
-#define DEFAULT_GO_LOWSPEED_LOAD 30
-	unsigned long go_lowspeed_load;
-#define DEFAULT_SUSPEND_MAX_FREQ 980000
-	unsigned int suspend_max_freq;
 	/* Target load. Lower values result in higher CPU speeds. */
-#define DEFAULT_TARGET_LOADS 50
 	spinlock_t target_loads_lock;
 	unsigned int *target_loads;
 	int ntarget_loads;
@@ -117,7 +112,7 @@ struct cpufreq_void_tunables {
 	 * The minimum amount of time to spend at a frequency before we can ramp
 	 * down.
 	 */
-#define DEFAULT_MIN_SAMPLE_TIME (40 * USEC_PER_MSEC)
+#define DEFAULT_MIN_SAMPLE_TIME (80 * USEC_PER_MSEC)
 	unsigned long min_sample_time;
 	/*
 	 * The sample rate of the timer used to increase frequency
@@ -351,25 +346,6 @@ static unsigned int freq_to_targetload(
 	return ret;
 }
 
-#define DEFAULT_MAX_LOAD 100
-u32 get_freq_max_load(int cpu, unsigned int freq)
-{
-	struct cpufreq_void_policyinfo *ppol = per_cpu(polinfo, cpu);
-
-	if (!cpumask_test_cpu(cpu, &controlled_cpus))
-		return DEFAULT_MAX_LOAD;
-
-	if (have_governor_per_policy()) {
-		if (!ppol || !ppol->cached_tunables)
-			return DEFAULT_MAX_LOAD;
-		return freq_to_targetload(ppol->cached_tunables, freq);
-	}
-
-	if (!cached_common_tunables)
-		return DEFAULT_MAX_LOAD;
-	return freq_to_targetload(cached_common_tunables, freq);
-}
-
 /*
  * If increasing frequencies never map to a lower target load then
  * choose_freq() will find the minimum frequency that does not exceed its
@@ -395,8 +371,9 @@ static unsigned int choose_freq(struct cpufreq_void_policyinfo *pcpu,
 		 * than or equal to the target load.
 		 */
 
-		index = cpufreq_table_find_index_l(&pcpu->p_nolim,
-						       loadadjfreq / tl);
+		index = cpufreq_frequency_table_target(&pcpu->p_nolim,
+						       loadadjfreq / tl,
+						       CPUFREQ_RELATION_L);
 		freq = pcpu->freq_table[index].frequency;
 
 		if (freq > prevfreq) {
@@ -408,9 +385,9 @@ static unsigned int choose_freq(struct cpufreq_void_policyinfo *pcpu,
 				 * Find the highest frequency that is less
 				 * than freqmax.
 				 */
-				index = cpufreq_table_find_index_c(
+				index = cpufreq_frequency_table_target(
 					    &pcpu->p_nolim,
-					    freqmax - 1);
+					    freqmax - 1, CPUFREQ_RELATION_H);
 				freq = pcpu->freq_table[index].frequency;
 
 				if (freq == freqmin) {
@@ -433,9 +410,9 @@ static unsigned int choose_freq(struct cpufreq_void_policyinfo *pcpu,
 				 * Find the lowest frequency that is higher
 				 * than freqmin.
 				 */
-				index = cpufreq_table_find_index_l(
+				index = cpufreq_frequency_table_target(
 					    &pcpu->p_nolim,
-					    freqmin + 1);
+					    freqmin + 1, CPUFREQ_RELATION_L);
 				freq = pcpu->freq_table[index].frequency;
 
 				/*
@@ -505,7 +482,6 @@ static void cpufreq_void_timer(int data)
 	struct sched_load *sl = ppol->sl;
 	struct cpufreq_void_cpuinfo *pcpu;
 	unsigned int new_freq;
-	unsigned int suspend_freq = 0;
 	unsigned int prev_laf = 0, t_prevlaf;
 	unsigned int pred_laf = 0, t_predlaf = 0;
 	unsigned int prev_chfreq, pred_chfreq, chosen_freq;
@@ -524,12 +500,6 @@ static void cpufreq_void_timer(int data)
 		return;
 	if (!ppol->governor_enabled)
 		goto exit;
-
-	suspend_freq = tunables->suspend_max_freq;
-	if (suspend_freq < ppol->policy->min)
-		suspend_freq = ppol->policy->min;
-	if (suspend_freq > ppol->policy->max)
-		suspend_freq = ppol->policy->max;
 
 	now = ktime_to_us(ktime_get());
 
@@ -594,10 +564,6 @@ static void cpufreq_void_timer(int data)
 		    new_load_pct >= NEW_TASK_RATIO) {
 			skip_hispeed_logic = true;
 			jump_to_max = true;
-		} else if (prev_l < tunables->go_lowspeed_load &&
-		    new_load_pct < NEW_TASK_RATIO) {
-			skip_hispeed_logic = false;
-			jump_to_max = false;
 		}
 		i++;
 	}
@@ -634,8 +600,6 @@ static void cpufreq_void_timer(int data)
 			else
 				new_freq = max(new_freq,
 					       tunables->hispeed_freq);
-		} else if (pol_load < tunables->go_lowspeed_load)
-				new_freq = ppol->policy->min;
 		}
 	}
 
@@ -657,7 +621,8 @@ static void cpufreq_void_timer(int data)
 
 	ppol->hispeed_validate_time = now;
 
-	index = cpufreq_table_find_index_l(&ppol->p_nolim, new_freq);
+	index = cpufreq_frequency_table_target(&ppol->p_nolim, new_freq,
+					   CPUFREQ_RELATION_L);
 	new_freq = ppol->freq_table[index].frequency;
 
 	/*
@@ -1074,25 +1039,6 @@ static ssize_t store_hispeed_freq(struct cpufreq_void_tunables *tunables,
 	return count;
 }
 
-static ssize_t show_suspend_max_freq(struct cpufreq_clarity_tunables *tunables,
-		char *buf)
-{
-	return sprintf(buf, "%u\n", tunables->suspend_max_freq);
-}
-
-static ssize_t store_suspend_max_freq(struct cpufreq_clarity_tunables *tunables,
-		const char *buf, size_t count)
-{
-	int ret;
-	long unsigned int val;
-
-	ret = kstrtoul(buf, 0, &val);
-	if (ret < 0)
-		return ret;
-	tunables->suspend_max_freq = val;
-	return count;
-}
-
 #define show_store_one(file_name)					\
 static ssize_t show_##file_name(					\
 	struct cpufreq_void_tunables *tunables, char *buf)	\
@@ -1497,9 +1443,7 @@ store_gov_pol_sys(file_name)
 show_store_gov_pol_sys(target_loads);
 show_store_gov_pol_sys(above_hispeed_delay);
 show_store_gov_pol_sys(hispeed_freq);
-show_store_gov_pol_sys(suspend_max_freq);
 show_store_gov_pol_sys(go_hispeed_load);
-show_store_gov_pol_sys(go_lowspeed_load);
 show_store_gov_pol_sys(min_sample_time);
 show_store_gov_pol_sys(timer_rate);
 show_store_gov_pol_sys(timer_slack);
@@ -1530,9 +1474,7 @@ __ATTR(_name, 0644, show_##_name##_gov_pol, store_##_name##_gov_pol)
 gov_sys_pol_attr_rw(target_loads);
 gov_sys_pol_attr_rw(above_hispeed_delay);
 gov_sys_pol_attr_rw(hispeed_freq);
-gov_sys_pol_attr_rw(suspend_max_freq);
 gov_sys_pol_attr_rw(go_hispeed_load);
-gov_sys_pol_attr_rw(go_lowspeed_load);
 gov_sys_pol_attr_rw(min_sample_time);
 gov_sys_pol_attr_rw(timer_rate);
 gov_sys_pol_attr_rw(timer_slack);
@@ -1558,9 +1500,7 @@ static struct attribute *void_attributes_gov_sys[] = {
 	&target_loads_gov_sys.attr,
 	&above_hispeed_delay_gov_sys.attr,
 	&hispeed_freq_gov_sys.attr,
-	&suspend_max_freq_gov_sys.attr,
 	&go_hispeed_load_gov_sys.attr,
-	&go_lowspeed_load_gov_sys.attr,
 	&min_sample_time_gov_sys.attr,
 	&timer_rate_gov_sys.attr,
 	&timer_slack_gov_sys.attr,
@@ -1588,9 +1528,7 @@ static struct attribute *void_attributes_gov_pol[] = {
 	&target_loads_gov_pol.attr,
 	&above_hispeed_delay_gov_pol.attr,
 	&hispeed_freq_gov_pol.attr,
-	&suspend_max_freq_gov_pol.attr,
 	&go_hispeed_load_gov_pol.attr,
-	&go_lowspeed_load_gov_pol.attr,
 	&min_sample_time_gov_pol.attr,
 	&timer_rate_gov_pol.attr,
 	&timer_slack_gov_pol.attr,
@@ -1638,16 +1576,12 @@ static struct cpufreq_void_tunables *alloc_tunable(
 	tunables->nabove_hispeed_delay =
 		ARRAY_SIZE(default_above_hispeed_delay);
 	tunables->go_hispeed_load = DEFAULT_GO_HISPEED_LOAD;
-	tunables->go_lowspeed_load = DEFAULT_GO_LOWSPEED_LOAD;
-	tunables->target_loads = DEFAULT_TARGET_LOADS;
-	tunables->ntarget_loads = ARRAY_SIZE(DEFAULT_TARGET_LOADS);
+	tunables->target_loads = default_target_loads;
+	tunables->ntarget_loads = ARRAY_SIZE(default_target_loads);
 	tunables->min_sample_time = DEFAULT_MIN_SAMPLE_TIME;
 	tunables->timer_rate = DEFAULT_TIMER_RATE;
 	tunables->boostpulse_duration_val = DEFAULT_MIN_SAMPLE_TIME;
 	tunables->timer_slack_val = DEFAULT_TIMER_SLACK;
-	tunables->suspend_max_freq = DEFAULT_SUSPEND_MAX_FREQ;
-	tunables->use_migration_notif = true;
-	tunables->use_sched_load = true;
 
 	spin_lock_init(&tunables->target_loads_lock);
 	spin_lock_init(&tunables->above_hispeed_delay_lock);
@@ -2004,5 +1938,5 @@ module_exit(cpufreq_void_gov_exit);
 MODULE_AUTHOR("Mike Chan <mike@android.com>");
 MODULE_AUTHOR("alanndz <alanmahmud0@gmail.com>");
 MODULE_DESCRIPTION("'cpufreq_void' - A cpufreq governor based from "
-	"Another CPU Governor");
+	"Another CPU GOV");
 MODULE_LICENSE("GPL");
