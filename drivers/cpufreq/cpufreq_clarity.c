@@ -37,8 +37,13 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/cpufreq_clarity.h>
 
+static DEFINE_PER_CPU(struct update_util_data, update_util);
+
 struct cpufreq_clarity_policyinfo {
 	struct timer_list policy_timer;
+	bool work_in_progress;
+	struct irq_work irq_work;
+	spinlock_t irq_work_lock; /* protects work_in_progress */
 	struct timer_list policy_slack_timer;
 	struct hrtimer notif_timer;
 	spinlock_t load_lock; /* protects load tracking stat */
@@ -216,9 +221,6 @@ static void cpufreq_clarity_timer_resched(unsigned long cpu,
 			pcpu->cputime_speedadj_timestamp =
 						pcpu->time_in_idle_timestamp;
 		}
-		del_timer(&ppol->policy_timer);
-		ppol->policy_timer.expires = expires;
-		add_timer(&ppol->policy_timer);
 	}
 
 	if (tunables->timer_slack_val >= 0 &&
@@ -232,8 +234,51 @@ static void cpufreq_clarity_timer_resched(unsigned long cpu,
 	spin_unlock_irqrestore(&ppol->load_lock, flags);
 }
 
+static void update_util_handler(struct update_util_data *data, u64 time,
+				unsigned int sched_flags)
+{
+	struct cpufreq_clarity_policyinfo *ppol;
+	unsigned long flags;
+
+	ppol = *this_cpu_ptr(&polinfo);
+	spin_lock_irqsave(&ppol->irq_work_lock, flags);
+	/*
+	 * The irq-work may not be allowed to be queued up right now
+	 * because work has already been queued up or is in progress.
+	 */
+	if (ppol->work_in_progress ||
+	    sched_flags & SCHED_CPUFREQ_INTERCLUSTER_MIG)
+		goto out;
+
+	ppol->work_in_progress = true;
+	irq_work_queue(&ppol->irq_work);
+out:
+	spin_unlock_irqrestore(&ppol->irq_work_lock, flags);
+}
+
+static inline void gov_clear_update_util(struct cpufreq_policy *policy)
+{
+	int i;
+
+	for_each_cpu(i, policy->cpus)
+		cpufreq_remove_update_util_hook(i);
+
+	synchronize_sched();
+}
+
+static void gov_set_update_util(struct cpufreq_policy *policy)
+{
+	struct update_util_data *util;
+	int cpu;
+
+	for_each_cpu(cpu, policy->cpus) {
+		util = &per_cpu(update_util, cpu);
+		cpufreq_add_update_util_hook(cpu, util, update_util_handler);
+	}
+}
+
 /* The caller shall take enable_sem write semaphore to avoid any timer race.
- * The policy_timer and policy_slack_timer must be deactivated when calling
+ * The policy_slack_timer must be deactivated when calling this function.
  * this function.
  */
 static void cpufreq_clarity_timer_start(
@@ -246,8 +291,7 @@ static void cpufreq_clarity_timer_start(
 	int i;
 
 	spin_lock_irqsave(&ppol->load_lock, flags);
-	ppol->policy_timer.expires = expires;
-	add_timer(&ppol->policy_timer);
+	gov_set_update_util(ppol->policy);
 	if (tunables->timer_slack_val >= 0 &&
 	    ppol->target_freq > ppol->policy->min) {
 		expires += usecs_to_jiffies(tunables->timer_slack_val);
@@ -312,8 +356,9 @@ static unsigned int choose_freq(struct cpufreq_clarity_policyinfo *pcpu,
 		unsigned int loadadjfreq)
 {
 	unsigned int freq = pcpu->policy->cur;
-		unsigned int prevfreq, freqmin, freqmax;
+	unsigned int prevfreq, freqmin, freqmax;
 	unsigned int tl;
+	struct cpufreq_frequency_table *freq_table = pcpu->freq_table;
 	int index;
 
 	freqmin = 0;
@@ -331,7 +376,7 @@ static unsigned int choose_freq(struct cpufreq_clarity_policyinfo *pcpu,
 		index = cpufreq_table_find_index_l(&pcpu->p_nolim,
 			    loadadjfreq / tl);
 
-		freq = pcpu->freq_table[index].frequency;
+		freq = freq_table[index].frequency;
 
 		if (freq > prevfreq) {
 			/* The previous frequency is too low. */
@@ -343,7 +388,7 @@ static unsigned int choose_freq(struct cpufreq_clarity_policyinfo *pcpu,
 				 * than freqmax.
 				 */
 				index = cpufreq_table_find_index_c(&pcpu->p_nolim, freqmax -1);
-				freq = pcpu->freq_table[index].frequency;
+				freq = freq_table[index].frequency;
 
 				if (freq == freqmin) {
 					/*
@@ -367,7 +412,7 @@ static unsigned int choose_freq(struct cpufreq_clarity_policyinfo *pcpu,
 				 */
 				index = cpufreq_table_find_index_l(&pcpu->p_nolim, 
 					    freqmin + 1);
-				freq = pcpu->freq_table[index].frequency;
+				freq = freq_table[index].frequency;
 
 				/*
 				 * If freqmax is the first frequency above
@@ -439,6 +484,7 @@ static void cpufreq_clarity_timer(unsigned long data)
 		ppol->policy->governor_data;
 	struct sched_load *sl = ppol->sl;
 	struct cpufreq_clarity_cpuinfo *pcpu;
+	struct cpufreq_frequency_table *freq_table = ppol->freq_table;
 	unsigned int new_freq, suspend_freq = 0;
 	unsigned int prev_laf = 0, t_prevlaf;
 	unsigned int pred_laf = 0, t_predlaf = 0;
@@ -588,7 +634,7 @@ static void cpufreq_clarity_timer(unsigned long data)
 		goto rearm;
 	}
 
-	new_freq = ppol->freq_table[index].frequency;
+	new_freq = freq_table[index].frequency;
 
 	/*
 	 * Do not scale below floor_freq unless we have been at or above the
@@ -641,8 +687,7 @@ static void cpufreq_clarity_timer(unsigned long data)
 	wake_up_process(speedchange_task);
 
 rearm:
-	if (!timer_pending(&ppol->policy_timer))
-		cpufreq_clarity_timer_resched(data, false);
+	cpufreq_clarity_timer_resched(data, false);
 
 	/*
 	 * Send govinfo notification.
@@ -762,7 +807,6 @@ static enum hrtimer_restart cpufreq_clarity_hrtimer(struct hrtimer *timer)
 	}
 	cpu = ppol->notif_cpu;
 	trace_cpufreq_clarity_load_change(cpu);
-	del_timer(&ppol->policy_timer);
 	del_timer(&ppol->policy_slack_timer);
 	cpufreq_clarity_timer(cpu);
 
@@ -1473,6 +1517,20 @@ static struct cpufreq_clarity_tunables *alloc_tunable(
 	return tunables;
 }
 
+static void irq_work(struct irq_work *irq_work)
+{
+	struct cpufreq_clarity_policyinfo *ppol;
+	unsigned long flags;
+
+	ppol = container_of(irq_work, struct cpufreq_clarity_policyinfo,
+			    irq_work);
+
+	cpufreq_clarity_timer(smp_processor_id());
+	spin_lock_irqsave(&ppol->irq_work_lock, flags);
+	ppol->work_in_progress = false;
+	spin_unlock_irqrestore(&ppol->irq_work_lock, flags);
+}
+
 static struct cpufreq_clarity_policyinfo *get_policyinfo(
 					struct cpufreq_policy *policy)
 {
@@ -1497,12 +1555,12 @@ static struct cpufreq_clarity_policyinfo *get_policyinfo(
 	}
 	ppol->sl = sl;
 
-	init_timer_deferrable(&ppol->policy_timer);
-	ppol->policy_timer.function = cpufreq_clarity_timer;
 	init_timer(&ppol->policy_slack_timer);
 	ppol->policy_slack_timer.function = cpufreq_clarity_nop_timer;
 	hrtimer_init(&ppol->notif_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
 	ppol->notif_timer.function = cpufreq_clarity_hrtimer;
+	init_irq_work(&ppol->irq_work, irq_work);
+	spin_lock_init(&ppol->irq_work_lock);
 	spin_lock_init(&ppol->load_lock);
 	spin_lock_init(&ppol->target_freq_lock);
 	init_rwsem(&ppol->enable_sem);
@@ -1662,7 +1720,6 @@ int cpufreq_clarity_start(struct cpufreq_policy *policy)
 		tunables = common_tunables;
 
 	BUG_ON(!tunables);
-
 	mutex_lock(&gov_lock);
 
 	freq_table = policy->freq_table;
@@ -1683,9 +1740,7 @@ int cpufreq_clarity_start(struct cpufreq_policy *policy)
 	ppol->reject_notification = true;
 	ppol->notif_pending = false;
 	down_write(&ppol->enable_sem);
-	del_timer_sync(&ppol->policy_timer);
 	del_timer_sync(&ppol->policy_slack_timer);
-	ppol->policy_timer.data = policy->cpu;
 	ppol->last_evaluated_jiffy = get_jiffies_64();
 	cpufreq_clarity_timer_start(tunables, policy->cpu);
 	ppol->governor_enabled = 1;
@@ -1715,7 +1770,9 @@ void cpufreq_clarity_stop(struct cpufreq_policy *policy)
 	down_write(&ppol->enable_sem);
 	ppol->governor_enabled = 0;
 	ppol->target_freq = 0;
-	del_timer_sync(&ppol->policy_timer);
+	gov_clear_update_util(ppol->policy);
+	irq_work_sync(&ppol->irq_work);
+	ppol->work_in_progress = false;
 	del_timer_sync(&ppol->policy_slack_timer);
 	up_write(&ppol->enable_sem);
 	ppol->reject_notification = false;
