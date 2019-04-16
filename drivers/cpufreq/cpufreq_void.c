@@ -104,6 +104,8 @@ struct cpufreq_void_tunables {
 	/* Go to hi speed when CPU load at or above this value. */
 #define DEFAULT_GO_HISPEED_LOAD 99
 	unsigned long go_hispeed_load;
+#define DEFAULT_GO_LOWSPEED_LOAD 30
+	unsigned long go_lowspeed_load;
 	/* Target load. Lower values result in higher CPU speeds. */
 	spinlock_t target_loads_lock;
 	unsigned int *target_loads;
@@ -564,6 +566,10 @@ static void cpufreq_void_timer(int data)
 		    new_load_pct >= NEW_TASK_RATIO) {
 			skip_hispeed_logic = true;
 			jump_to_max = true;
+		} else if (prev_l < tunables->go_lowspeed_load &&
+		    new_load_pct < NEW_TASK_RATIO) {
+			skip_hispeed_logic = false;
+			jump_to_max = false;
 		}
 		i++;
 	}
@@ -600,7 +606,8 @@ static void cpufreq_void_timer(int data)
 			else
 				new_freq = max(new_freq,
 					       tunables->hispeed_freq);
-		}
+		} else if (pol_load < tunables->go_lowspeed_load)
+				new_freq = ppol->policy->min;
 	}
 
 	if (now - ppol->max_freq_hyst_start_time <
@@ -1083,6 +1090,25 @@ static ssize_t store_go_hispeed_load(struct cpufreq_void_tunables
 	return count;
 }
 
+static ssize_t show_go_lowspeed_load(struct cpufreq_void_tunables
+		*tunables, char *buf)
+{
+	return sprintf(buf, "%lu\n", tunables->go_lowspeed_load);
+}
+
+static ssize_t store_go_lowspeed_load(struct cpufreq_void_tunables
+		*tunables, const char *buf, size_t count)
+{
+	int ret;
+	unsigned long val;
+
+	ret = kstrtoul(buf, 0, &val);
+	if (ret < 0)
+		return ret;
+	tunables->go_lowspeed_load = val;
+	return count;
+}
+
 static ssize_t show_min_sample_time(struct cpufreq_void_tunables
 		*tunables, char *buf)
 {
@@ -1444,6 +1470,7 @@ show_store_gov_pol_sys(target_loads);
 show_store_gov_pol_sys(above_hispeed_delay);
 show_store_gov_pol_sys(hispeed_freq);
 show_store_gov_pol_sys(go_hispeed_load);
+show_store_gov_pol_sys(go_lowspeed_load);
 show_store_gov_pol_sys(min_sample_time);
 show_store_gov_pol_sys(timer_rate);
 show_store_gov_pol_sys(timer_slack);
@@ -1475,6 +1502,7 @@ gov_sys_pol_attr_rw(target_loads);
 gov_sys_pol_attr_rw(above_hispeed_delay);
 gov_sys_pol_attr_rw(hispeed_freq);
 gov_sys_pol_attr_rw(go_hispeed_load);
+gov_sys_pol_attr_rw(go_lowspeed_load);
 gov_sys_pol_attr_rw(min_sample_time);
 gov_sys_pol_attr_rw(timer_rate);
 gov_sys_pol_attr_rw(timer_slack);
@@ -1501,6 +1529,7 @@ static struct attribute *void_attributes_gov_sys[] = {
 	&above_hispeed_delay_gov_sys.attr,
 	&hispeed_freq_gov_sys.attr,
 	&go_hispeed_load_gov_sys.attr,
+	&go_lowspeed_load_gov_sys.attr,
 	&min_sample_time_gov_sys.attr,
 	&timer_rate_gov_sys.attr,
 	&timer_slack_gov_sys.attr,
@@ -1529,6 +1558,7 @@ static struct attribute *void_attributes_gov_pol[] = {
 	&above_hispeed_delay_gov_pol.attr,
 	&hispeed_freq_gov_pol.attr,
 	&go_hispeed_load_gov_pol.attr,
+	&go_lowspeed_load_gov_pol.attr,
 	&min_sample_time_gov_pol.attr,
 	&timer_rate_gov_pol.attr,
 	&timer_slack_gov_pol.attr,
@@ -1576,6 +1606,7 @@ static struct cpufreq_void_tunables *alloc_tunable(
 	tunables->nabove_hispeed_delay =
 		ARRAY_SIZE(default_above_hispeed_delay);
 	tunables->go_hispeed_load = DEFAULT_GO_HISPEED_LOAD;
+	tunables->go_lowspeed_load = DEFAULT_GO_LOWSPEED_LOAD;
 	tunables->target_loads = default_target_loads;
 	tunables->ntarget_loads = ARRAY_SIZE(default_target_loads);
 	tunables->min_sample_time = DEFAULT_MIN_SAMPLE_TIME;
