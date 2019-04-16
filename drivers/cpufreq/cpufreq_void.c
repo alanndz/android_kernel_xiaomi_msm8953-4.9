@@ -13,7 +13,9 @@
  * GNU General Public License for more details.
  *
  * Author: Mike Chan (mike@android.com)
- *			   alanndz (alanmahmud0@gmail.com)
+ *	   alanndz (alanmahmud0@gmail.com)
+ *
+ * Credit and thanks to: Ryan Andri (ryanandri@linuxmail.org) for clarity base
  *
  */
 
