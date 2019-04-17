@@ -494,8 +494,8 @@ static void cpufreq_void_timer(int data)
 	spin_lock_irqsave(&ppol->target_freq_lock, flags);
 	spin_lock(&ppol->load_lock);
 
-	skip_hispeed_logic =
-		tunables->ignore_hispeed_on_notif && ppol->notif_pending;
+	skip_hispeed_logic = tunables->enable_prediction ? true :
+	   tunables->ignore_hispeed_on_notif && ppol->notif_pending;
 	skip_min_sample_time = tunables->fast_ramp_down && ppol->notif_pending;
 	ppol->notif_pending = false;
 	now = ktime_to_us(ktime_get());
@@ -565,7 +565,7 @@ static void cpufreq_void_timer(int data)
 	}
 
 	new_freq = chosen_freq;
-	if (jump_to_max_no_ts || jump_to_max) {
+	if (false && (jump_to_max_no_ts || jump_to_max)) {
 		new_freq = ppol->policy->cpuinfo.max_freq;
 	} else if (!skip_hispeed_logic) {
 		if (pol_load >= tunables->go_hispeed_load ||
